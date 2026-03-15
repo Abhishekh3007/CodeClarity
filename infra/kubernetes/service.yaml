@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: codeclarity
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 80
+      targetPort: 3001
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: repo-service
+  namespace: codeclarity
+spec:
+  selector:
+    app: repo-service
+  ports:
+    - port: 80
+      targetPort: 3002
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: review-service
+  namespace: codeclarity
+spec:
+  selector:
+    app: review-service
+  ports:
+    - port: 80
+      targetPort: 3003
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: codeclarity
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer

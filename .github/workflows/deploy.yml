@@ -1,0 +1,156 @@
+name: CI/CD — CodeClarity
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/codeclarity
+
+jobs:
+
+  # ─────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: codeclarity
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: codeclarity_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      matrix:
+        service: [auth-service, repo-service, review-service, worker-service]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: services/${{ matrix.service }}
+
+      - name: Run tests
+        run: npm test
+        working-directory: services/${{ matrix.service }}
+        env:
+          DATABASE_URL: postgresql://codeclarity:secret@localhost:5432/codeclarity_test
+          JWT_SECRET: test_secret_do_not_use_in_production
+          REDIS_URL: redis://localhost:6379
+
+  # ─────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+
+    strategy:
+      matrix:
+        service: [auth-service, repo-service, review-service, worker-service, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine build context
+        id: ctx
+        run: |
+          if [ "${{ matrix.service }}" = "frontend" ]; then
+            echo "context=frontend" >> $GITHUB_OUTPUT
+          else
+            echo "context=services/${{ matrix.service }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.ctx.outputs.context }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Kubernetes context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+
+      - name: Update image tags in manifests
+        run: |
+          sed -i "s|:latest|:${{ github.sha }}|g" infra/kubernetes/deployment.yaml
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f infra/kubernetes/
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/auth-service -n codeclarity --timeout=120s
+          kubectl rollout status deployment/repo-service -n codeclarity --timeout=120s
+          kubectl rollout status deployment/review-service -n codeclarity --timeout=120s
+          kubectl rollout status deployment/worker-service -n codeclarity --timeout=120s
+          kubectl rollout status deployment/frontend -n codeclarity --timeout=120s
+
+  # ─────────────────────────────────────────
+  smoke-test:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Health check all services
+        run: |
+          curl --fail ${{ secrets.APP_URL }}/auth/health || exit 1
+          curl --fail ${{ secrets.APP_URL }}/repos/health || exit 1
+          curl --fail ${{ secrets.APP_URL }}/reviews/health || exit 1
+          echo "All health checks passed."
