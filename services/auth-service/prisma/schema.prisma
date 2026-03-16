@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  password     String
+  githubId     String?
+  createdAt    DateTime     @default(now())
+  repositories Repository[]
+
+  @@map("users")
+}
+
+model Repository {
+  id           String   @id @default(uuid())
+  userId       String
+  repoName     String
+  repoUrl      String
+  lastAnalyzed DateTime?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews      Review[]
+
+  @@index([userId])
+  @@map("repositories")
+}
+
+model Review {
+  id         String     @id @default(uuid())
+  repoId     String
+  fileName   String
+  issueType  String
+  severity   String
+  suggestion String
+  createdAt  DateTime   @default(now())
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId])
+  @@map("reviews")
+}
