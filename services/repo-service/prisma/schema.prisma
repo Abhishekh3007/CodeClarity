@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Repository {
+  id           String    @id @default(uuid())
+  userId       String
+  repoName     String
+  repoUrl      String
+  lastAnalyzed DateTime?
+
+  @@index([userId])
+  @@unique([userId, repoUrl])
+  @@map("repositories")
+}
+
+model GitHubConnection {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  githubUserId String
+  accessToken  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([githubUserId])
+  @@map("github_connections")
+}
