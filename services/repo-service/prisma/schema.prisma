@@ -13,10 +13,36 @@ model Repository {
   repoName     String
   repoUrl      String
   lastAnalyzed DateTime?
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews      Review[]
 
   @@index([userId])
-  @@unique([userId, repoUrl])
   @@map("repositories")
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  password     String
+  githubId     String?
+  createdAt    DateTime     @default(now())
+  repositories Repository[]
+
+  @@map("users")
+}
+
+model Review {
+  id         String     @id @default(uuid())
+  repoId     String
+  fileName   String
+  issueType  String
+  severity   String
+  suggestion String
+  createdAt  DateTime   @default(now())
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId])
+  @@map("reviews")
 }
 
 model GitHubConnection {

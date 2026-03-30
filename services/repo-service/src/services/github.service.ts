@@ -124,26 +124,31 @@ export async function getGithubConnectionToken(userId: string): Promise<string |
 }
 
 export async function syncRepositories(userId: string, repositories: GitHubRepository[]): Promise<void> {
-  await prisma.$transaction(
-    repositories.map((repository) =>
-      prisma.repository.upsert({
-        where: {
-          userId_repoUrl: {
-            userId,
-            repoUrl: repository.html_url
-          }
-        },
-        create: {
-          userId,
-          repoName: repository.name,
-          repoUrl: repository.html_url
-        },
-        update: {
-          repoName: repository.name
-        }
-      })
-    )
-  );
+  for (const repository of repositories) {
+    const existingRepository = await prisma.repository.findFirst({
+      where: {
+        userId,
+        repoUrl: repository.html_url
+      },
+      select: { id: true }
+    });
+
+    if (existingRepository) {
+      await prisma.repository.update({
+        where: { id: existingRepository.id },
+        data: { repoName: repository.name }
+      });
+      continue;
+    }
+
+    await prisma.repository.create({
+      data: {
+        userId,
+        repoName: repository.name,
+        repoUrl: repository.html_url
+      }
+    });
+  }
 }
 
 export async function listRepositories(userId: string): Promise<Array<{ id: string; repoName: string; repoUrl: string; lastAnalyzed: Date | null }>> {
