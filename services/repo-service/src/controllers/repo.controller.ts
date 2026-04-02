@@ -11,6 +11,7 @@ import {
   saveGithubConnection,
   syncRepositories
 } from '../services/github.service';
+import { createOAuthStateToken, verifyOAuthStateToken } from '../services/oauth-state.service';
 
 function parseOwnerAndRepo(repoUrl: string): { owner: string; repo: string } | null {
   try {
@@ -34,10 +35,42 @@ export async function getGithubAuthUrl(req: Request, res: Response): Promise<voi
       return;
     }
 
-    const authUrl = buildGithubAuthorizeUrl(req.user.userId);
+    const stateToken = createOAuthStateToken(req.user.userId);
+    const authUrl = buildGithubAuthorizeUrl(stateToken);
     res.status(200).json({ authUrl });
   } catch (error) {
     res.status(500).json({ message: (error as Error).message || 'Internal server error' });
+  }
+}
+
+export async function completeGithubCallback(req: Request, res: Response): Promise<void> {
+  try {
+    const { code, state } = req.query as { code?: string; state?: string };
+
+    if (!code) {
+      res.status(400).json({ message: 'GitHub authorization code is required' });
+      return;
+    }
+
+    if (!state) {
+      res.status(400).json({ message: 'OAuth state is required' });
+      return;
+    }
+
+    const { userId } = verifyOAuthStateToken(state);
+    const accessToken = await exchangeCodeForAccessToken(code);
+    const githubUser = await fetchGithubUser(accessToken);
+    const repositories = await fetchGithubRepositories(accessToken);
+
+    await saveGithubConnection(userId, String(githubUser.id), accessToken);
+    await syncRepositories(userId, repositories);
+
+    res.status(200).json({
+      message: 'GitHub account connected successfully',
+      repositoriesSynced: repositories.length
+    });
+  } catch (error) {
+    res.status(400).json({ message: (error as Error).message || 'Invalid callback request' });
   }
 }
 
@@ -55,7 +88,14 @@ export async function connectGithub(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    if (!state || state !== req.user.userId) {
+    if (!state) {
+      res.status(400).json({ message: 'OAuth state is required' });
+      return;
+    }
+
+    const { userId } = verifyOAuthStateToken(state);
+
+    if (userId !== req.user.userId) {
       res.status(400).json({ message: 'Invalid OAuth state' });
       return;
     }
