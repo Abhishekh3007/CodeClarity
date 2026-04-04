@@ -124,6 +124,7 @@ jobs:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBECONFIG }}
 
+          
       - name: Update image tags in manifests
         run: |
           sed -i "s|:latest|:${{ github.sha }}|g" infra/kubernetes/deployment.yaml
